@@ -34,7 +34,7 @@ jobs:
           api = HfApi(token=token)
 
           username = api.whoami()["name"]
-          space_name = "chat2api"
+          space_name = "chat2api-v2"
           repo_id = f"{username}/{space_name}"
           print(f"Target: {repo_id}")
 
