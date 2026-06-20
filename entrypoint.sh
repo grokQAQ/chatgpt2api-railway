@@ -63,7 +63,7 @@ fi
 # 3. 启动 FlareSolverr 后台服务
 echo "[entrypoint] Starting FlareSolverr on port 8191..."
 cd /opt/flaresolverr
-LOG_LEVEL=${LOG_LEVEL:-info} python -m src.flaresolverr &
+PYTHONPATH=/opt/flaresolverr/src:$PYTHONPATH LOG_LEVEL=${LOG_LEVEL:-info} python -m src.flaresolverr &
 FLARE_PID=$!
 cd /app
 
