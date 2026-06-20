@@ -1,0 +1,135 @@
+name: Deploy to Railway
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Railway via API
+        env:
+          RAILWAY_TOKEN_1: ${{ secrets.RAILWAY_TOKEN_1 }}
+          RAILWAY_TOKEN_2: ${{ secrets.RAILWAY_TOKEN_2 }}
+          PROXY_SUB_URL: ${{ secrets.SECRET_PROXY_SUB_URL }}
+          DATABASE_URL: ${{ secrets.SECRET_DATABASE_URL }}
+          AUTH_KEY: ${{ secrets.SECRET_AUTH_KEY }}
+        run: |
+          # 使用第一个 Token 创建项目
+          echo "=== Creating Railway project ==="
+          CREATE_RESULT=$(curl -s -X POST \
+            https://backboard.railway.com/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"mutation { projectCreate(input: { name: \"chatgpt2api-register\" }) { id name } }"}')
+          
+          echo "Create result: $CREATE_RESULT"
+          
+          PROJECT_ID=$(echo "$CREATE_RESULT" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              print(data['projectCreate']['id'])
+          except Exception as e:
+              print(f'ERROR: {e}', file=sys.stderr)
+              sys.exit(1)
+          ")
+          
+          if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "None" ]; then
+            echo "Failed to create project"
+            exit 1
+          fi
+          
+          echo "Project ID: $PROJECT_ID"
+          
+          # 获取环境和团队 ID
+          echo "=== Getting environment ==="
+          ENV_RESULT=$(curl -s -X POST \
+            https://backboard.railway.com/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"query { project(id: \\\"$PROJECT_ID\\\") { environments { edges { node { id name } } } teams { edges { node { id name } } } } }\"}")
+          
+          echo "Env result: $ENV_RESULT"
+          
+          ENV_ID=$(echo "$ENV_RESULT" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              envs = data['project']['environments']['edges']
+              if envs:
+                  print(envs[0]['node']['id'])
+          except:
+              pass
+          ")
+          
+          TEAM_ID=$(echo "$ENV_RESULT" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              teams = data['project']['teams']['edges']
+              if teams:
+                  print(teams[0]['node']['id'])
+          except:
+              pass
+          ")
+          
+          echo "Environment ID: $ENV_ID"
+          echo "Team ID: $TEAM_ID"
+          
+          # 创建服务（从 GitHub 仓库）
+          echo "=== Creating service ==="
+          SVC_RESULT=$(curl -s -X POST \
+            https://backboard.railway.com/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { serviceCreate(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", name: \\\"register\\\", source: { repo: \\\"NapCat52001/chatgpt2api\\\", branch: \\\"render\\\" } }) { id name } }\"}")
+          
+          echo "Service result: $SVC_RESULT"
+          
+          SERVICE_ID=$(echo "$SVC_RESULT" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              print(data['serviceCreate']['id'])
+          except Exception as e:
+              print(f'ERROR: {e}', file=sys.stderr)
+              sys.exit(1)
+          ")
+          
+          echo "Service ID: $SERVICE_ID"
+          
+          # 设置环境变量
+          echo "=== Setting environment variables ==="
+          VARS='[
+            {"key": "PROXY_SUB_URL", "value": "'"$PROXY_SUB_URL"'"},
+            {"key": "STORAGE_BACKEND", "value": "postgres"},
+            {"key": "DATABASE_URL", "value": "'"$DATABASE_URL"'"},
+            {"key": "CHATGPT2API_AUTH_KEY", "value": "'"$AUTH_KEY"'"},
+            {"key": "LOG_LEVEL", "value": "warning"}
+          ]'
+          
+          for var in $(echo "$VARS" | python3 -c "
+          import sys, json
+          vars = json.load(sys.stdin)
+          for v in vars:
+              print(json.dumps(v))
+          "); do
+            KEY=$(echo "$var" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])")
+            VALUE=$(echo "$var" | python3 -c "import sys,json; print(json.load(sys.stdin)['value'])")
+            
+            echo "  Setting $KEY..."
+            curl -s -X POST \
+              https://backboard.railway.com/graphql/v2 \
+              -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\":\"mutation { variableUpsert(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\", name: \\\"$KEY\\\", value: \\\"$VALUE\\\" }) { id } }\"}" > /dev/null
+          done
+          
+          echo "=== Deployment triggered! ==="
+          echo "Project: https://railway.com/project/$PROJECT_ID"
+          echo ""
+          echo "Next steps:"
+          echo "1. Go to the Railway dashboard"
+          echo "2. Click on the 'register' service"
+          echo "3. Go to Settings → Networking → Generate Domain"
