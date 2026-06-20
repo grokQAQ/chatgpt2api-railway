@@ -1,0 +1,49 @@
+name: Check and Restart HF Space
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check HF Space status and restart if needed
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install -q huggingface_hub
+          python3 << 'PYEOF'
+          import os
+          from huggingface_hub import HfApi
+
+          token = os.environ["HF_TOKEN"]
+          api = HfApi(token=token)
+          repo_id = "mansui52001/chat2api"
+
+          # 检查状态
+          try:
+              runtime = api.get_space_runtime(repo_id)
+              print(f"Stage: {runtime.stage}")
+              print(f"Hardware: {runtime.hardware}")
+
+              if runtime.stage in ("BUILDING", "RUNNING_BUILDING", "DEPLOYING"):
+                  print("Space is building, waiting...")
+              elif runtime.stage in ("RUNNING", "RUNNING_BUILDING"):
+                  print("Space is running!")
+              elif runtime.stage in ("STOPPED", "PAUSED", "SLEEPING", "BUILD_ERROR", "RUNTIME_ERROR"):
+                  print(f"Space is {runtime.stage}, restarting...")
+                  api.restart_space(repo_id)
+                  print("Restart triggered!")
+              else:
+                  print(f"Unknown stage: {runtime.stage}, attempting restart...")
+                  api.restart_space(repo_id)
+                  print("Restart triggered!")
+          except Exception as e:
+              print(f"Error checking status: {e}")
+              print("Attempting restart anyway...")
+              try:
+                  api.restart_space(repo_id)
+                  print("Restart triggered!")
+              except Exception as e2:
+                  print(f"Restart failed: {e2}")
+          PYEOF
