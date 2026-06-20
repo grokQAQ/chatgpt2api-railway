@@ -101,13 +101,13 @@ jobs:
           
           echo "Environment ID: $ENV_ID"
           
-          # 创建服务（从 GitHub 仓库）
+          # 创建空服务
           echo "=== Creating service ==="
           SVC_RESULT=$(curl -s -X POST \
             https://backboard.railway.com/graphql/v2 \
             -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
             -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation { serviceCreate(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", name: \\\"register\\\", source: { repo: \\\"NapCat52001/chatgpt2api\\\", branch: \\\"render\\\" } }) { id name } }\"}")
+            -d "{\"query\":\"mutation { serviceCreate(input: { projectId: \\\"$PROJECT_ID\\\", name: \\\"register\\\" }) { id name } }\"}")
           
           echo "Service result: $SVC_RESULT"
           
@@ -122,6 +122,16 @@ jobs:
           ")
           
           echo "Service ID: $SERVICE_ID"
+          
+          # 连接 GitHub 仓库并指定分支
+          echo "=== Connecting GitHub repo (render branch) ==="
+          CONNECT_RESULT=$(curl -s -X POST \
+            https://backboard.railway.com/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { serviceConnect(id: \\\"$SERVICE_ID\\\", input: { repo: \\\"NapCat52001/chatgpt2api\\\", branch: \\\"render\\\" }) { id } }\"}")
+          
+          echo "Connect result: $CONNECT_RESULT"
           
           # 设置环境变量
           echo "=== Setting environment variables ==="
