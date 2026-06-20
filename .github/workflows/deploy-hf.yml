@@ -1,0 +1,93 @@
+name: Deploy to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install huggingface_hub
+        run: pip install huggingface_hub
+
+      - name: Deploy to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import os, json, urllib.request
+          from huggingface_hub import HfApi
+
+          token = os.environ["HF_TOKEN"]
+          api = HfApi(token=token)
+
+          username = api.whoami()["name"]
+          space_name = "chatgpt2api"
+          repo_id = f"{username}/{space_name}"
+          print(f"Target: {repo_id}")
+
+          # 创建 Space
+          try:
+              api.create_repo(
+                  repo_id=repo_id,
+                  repo_type="space",
+                  space_sdk="docker",
+                  private=False,
+                  exist_ok=True,
+              )
+          except Exception as e:
+              print(f"Create repo: {e}")
+
+          # 设置 Secrets
+          secrets = {
+              "CHATGPT2API_AUTH_KEY": os.environ.get("SECRET_AUTH_KEY", "chatgpt2api"),
+              "STORAGE_BACKEND": "postgres",
+              "DATABASE_URL": os.environ.get("SECRET_DATABASE_URL", ""),
+          }
+          headers = {"Authorization": f"Bearer {token}"}
+          for key, value in secrets.items():
+              if not value:
+                  continue
+              data = json.dumps({"key": key, "value": value}).encode()
+              req = urllib.request.Request(
+                  f"https://huggingface.co/api/spaces/{repo_id}/secrets",
+                  data=data,
+                  headers={**headers, "Content-Type": "application/json"},
+                  method="POST",
+              )
+              try:
+                  urllib.request.urlopen(req)
+                  print(f"  Secret OK: {key}")
+              except Exception as e:
+                  print(f"  Secret {key}: {e}")
+
+          # 上传源码
+          print("Uploading to HF Space...")
+          api.upload_folder(
+              folder_path=".",
+              repo_id=repo_id,
+              repo_type="space",
+              commit_message="deploy: chatgpt2api",
+              ignore_patterns=[
+                  ".git", ".github",
+                  "node_modules", ".next",
+                  "__pycache__", "*.pyc",
+                  ".venv", "data",
+                  ".env", ".env.local",
+                  "docs", "test",
+                  "docker-compose*.yml",
+                  ".dockerignore", ".codex",
+                  "LICENSE",
+              ],
+          )
+          print(f"Deployed: https://huggingface.co/spaces/{repo_id}")
+          PYEOF
