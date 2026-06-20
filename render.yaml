@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: chatgpt2api-register
+    runtime: docker
+    dockerfilePath: ./Dockerfile.render
+    plan: free
+    envVars:
+      - key: PROXY_SUB_URL
+        sync: false
+      - key: STORAGE_BACKEND
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: CHATGPT2API_AUTH_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: warning
