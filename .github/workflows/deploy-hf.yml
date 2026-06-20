@@ -50,19 +50,36 @@ jobs:
           except Exception as e:
               print(f"Create repo: {e}")
 
-          # 设置 Secrets（完整版：API + 代理 + FlareSolverr + 注册机）
+          # 设置 Secrets（直连模式：HF IP 能过 Cloudflare，不需要代理）
           secrets = {
               "CHATGPT2API_AUTH_KEY": os.environ.get("SECRET_AUTH_KEY", "chatgpt2api"),
               "STORAGE_BACKEND": "postgres",
               "DATABASE_URL": os.environ.get("SECRET_DATABASE_URL", ""),
-              "PROXY_SUB_URL": os.environ.get("SECRET_PROXY_SUB_URL", ""),
+              # 不设 PROXY_SUB_URL - HF 直连 IP 能过 Cloudflare
+              # 代理会导致出口 IP 被拦截
               "CHATGPT2API_PROXY_RUNTIME_ENABLED": "true",
+              "CHATGPT2API_PROXY_RUNTIME_EGRESS_MODE": "direct",
               "CHATGPT2API_PROXY_RUNTIME_CLEARANCE_ENABLED": "true",
               "CHATGPT2API_PROXY_RUNTIME_CLEARANCE_MODE": "flaresolverr",
               "CHATGPT2API_FLARESOLVERR_URL": "http://127.0.0.1:8191",
               "CHATGPT2API_PROXY_RUNTIME_FORCE": "true",
           }
           headers = {"Authorization": f"Bearer {token}"}
+
+          # 删除旧的 PROXY_SUB_URL secret（HF 直连不需要代理）
+          for key_to_delete in ["PROXY_SUB_URL"]:
+              req = urllib.request.Request(
+                  f"https://huggingface.co/api/spaces/{repo_id}/secrets/{key_to_delete}",
+                  headers={**headers},
+                  method="DELETE",
+              )
+              try:
+                  urllib.request.urlopen(req)
+                  print(f"  Secret DELETED: {key_to_delete}")
+              except Exception as e:
+                  print(f"  Secret DELETE {key_to_delete}: {e}")
+
+          # 设置 Secrets（直连模式：HF IP 能过 Cloudflare，不需要代理）
           for key, value in secrets.items():
               if not value:
                   print(f"  Secret SKIP: {key} (empty)")
