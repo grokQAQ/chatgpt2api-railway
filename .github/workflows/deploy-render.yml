@@ -7,14 +7,38 @@ jobs:
   deploy-render:
     runs-on: ubuntu-latest
     steps:
-      - name: Create Render Service
+      - name: Get Render Owner ID and Create Service
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           PROXY_SUB_URL: ${{ secrets.SECRET_PROXY_SUB_URL }}
           DATABASE_URL: ${{ secrets.SECRET_DATABASE_URL }}
           AUTH_KEY: ${{ secrets.SECRET_AUTH_KEY }}
         run: |
-          # 构建环境变量 JSON
+          # 1. 获取 ownerID
+          echo "Fetching Render owner ID..."
+          OWNERS=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/owners")
+          echo "Owners response: $OWNERS"
+          
+          OWNER_ID=$(echo "$OWNERS" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              if isinstance(data, list) and len(data) > 0:
+                  print(data[0].get('id', data[0].get('owner', {}).get('id', '')))
+              elif isinstance(data, dict):
+                  print(data.get('id', ''))
+          except:
+              pass
+          ")
+          
+          if [ -z "$OWNER_ID" ]; then
+            echo "ERROR: Could not get owner ID"
+            exit 1
+          fi
+          echo "Owner ID: $OWNER_ID"
+          
+          # 2. 构建环境变量
           ENV_VARS=$(python3 -c "
           import json
           env_vars = [
@@ -27,12 +51,13 @@ jobs:
           print(json.dumps(env_vars))
           ")
 
-          # 创建服务
+          # 3. 创建服务
           PAYLOAD=$(python3 -c "
           import json
           payload = {
             'type': 'web_service',
             'name': 'chatgpt2api-register',
+            'ownerId': '$OWNER_ID',
             'repo': 'https://github.com/NapCat52001/chatgpt2api',
             'branch': 'main',
             'plan': 'free',
@@ -44,8 +69,6 @@ jobs:
           ")
 
           echo "Creating Render service..."
-          echo "Payload: $PAYLOAD"
-
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.render.com/v1/services" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
