@@ -133,25 +133,38 @@ jobs:
           
           echo "Connect result: $CONNECT_RESULT"
           
-          # 设置环境变量
+          # 设置环境变量（variableUpsert 返回 Boolean，不需要子字段选择）
           echo "=== Setting environment variables ==="
           for KV in "PROXY_SUB_URL=$PROXY_SUB_URL" "STORAGE_BACKEND=postgres" "DATABASE_URL=$DATABASE_URL" "CHATGPT2API_AUTH_KEY=$AUTH_KEY" "LOG_LEVEL=warning"; do
             KEY="${KV%%=*}"
             VALUE="${KV#*=}"
             echo "  Setting $KEY..."
-            curl -s -X POST \
+            RESULT=$(curl -s -X POST \
               https://backboard.railway.com/graphql/v2 \
               -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
               -H "Content-Type: application/json" \
-              -d "{\"query\":\"mutation { variableUpsert(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\", name: \\\"$KEY\\\", value: \\\"$VALUE\\\" }) { id } }\"}" > /dev/null
+              -d "{\"query\":\"mutation { variableUpsert(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\", name: \\\"$KEY\\\", value: \\\"$VALUE\\\", skipDeploys: true }) }\"}")
+            echo "  Result: $RESULT"
           done
-          
+
+          # 触发部署
+          echo "=== Triggering deployment ==="
+          DEPLOY_RESULT=$(curl -s -X POST \
+            https://backboard.railway.com/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { deploy(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\" }) }\"}")
+          echo "Deploy result: $DEPLOY_RESULT"
+
+          # 生成域名
+          echo "=== Generating domain ==="
+          DOMAIN_RESULT=$(curl -s -X POST \
+            https://backboard.railway.com/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\":\"mutation { serviceDomainCreate(input: { environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\", targetPort: 10000 }) { id domain } }\"}")
+          echo "Domain result: $DOMAIN_RESULT"
+
           echo ""
-          echo "=== Deployment triggered! ==="
+          echo "=== Deployment complete! ==="
           echo "Project: https://railway.com/project/$PROJECT_ID"
-          echo ""
-          echo "Next steps:"
-          echo "1. Go to the Railway dashboard"
-          echo "2. Click on the 'register' service"
-          echo "3. Wait for build to complete"
-          echo "4. Go to Settings -> Networking -> Generate Domain"
