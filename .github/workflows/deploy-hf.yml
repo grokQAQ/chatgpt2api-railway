@@ -24,7 +24,6 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           SECRET_AUTH_KEY: ${{ secrets.SECRET_AUTH_KEY }}
           SECRET_DATABASE_URL: ${{ secrets.SECRET_DATABASE_URL }}
-          SECRET_PROXY_SUB_URL: ${{ secrets.SECRET_PROXY_SUB_URL }}
         run: |
           python3 << 'PYEOF'
           import os, json, urllib.request
@@ -50,12 +49,11 @@ jobs:
           except Exception as e:
               print(f"Create repo: {e}")
 
-          # 设置 Secrets
+          # 设置 Secrets（纯 API 模式，无代理）
           secrets = {
               "CHATGPT2API_AUTH_KEY": os.environ.get("SECRET_AUTH_KEY", "chatgpt2api"),
               "STORAGE_BACKEND": "postgres",
               "DATABASE_URL": os.environ.get("SECRET_DATABASE_URL", ""),
-              "PROXY_SUB_URL": os.environ.get("SECRET_PROXY_SUB_URL", ""),
           }
           headers = {"Authorization": f"Bearer {token}"}
           for key, value in secrets.items():
@@ -81,7 +79,7 @@ jobs:
               folder_path=".",
               repo_id=repo_id,
               repo_type="space",
-              commit_message="deploy: chatgpt2api",
+              commit_message="deploy: chatgpt2api (pure API, no proxy)",
               ignore_patterns=[
                   ".git", ".github",
                   "node_modules", ".next",
@@ -92,19 +90,8 @@ jobs:
                   "docker-compose*.yml",
                   ".dockerignore", ".codex",
                   "LICENSE",
+                  "entrypoint.sh",
               ],
           )
           print(f"Deployed: https://huggingface.co/spaces/{repo_id}")
           PYEOF
-
-  # 定时 ping 防止 HF Space 休眠
-  keep-alive:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    steps:
-      - name: Ping HF Space
-        run: |
-          curl -fsS "https://huggingface.co/spaces/mansui52001/chat2api" > /dev/null && echo "Ping OK" || echo "Ping failed"
-
-# 定时保活：每 5 分钟 ping 一次
-# 使用单独的 workflow 文件避免与部署冲突
