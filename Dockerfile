@@ -44,11 +44,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY main.py ./
 COPY VERSION ./
-# config.json 可能被 .gitignore 排除，如果不存在则生成默认配置
-COPY config.json* ./
-RUN if [ ! -f config.json ]; then \
-    printf '{\n  "auth-key": "chatgpt2api",\n  "refresh_account_interval_minute": 5\n}\n' > config.json; \
-    fi
+# config.json 被 .gitignore 排除，无法上传到 HF Space，直接生成默认配置
+RUN printf '{\n  "auth-key": "chatgpt2api",\n  "refresh_account_interval_minute": 5\n}\n' > config.json
 COPY api ./api
 COPY services ./services
 COPY utils ./utils

@@ -90,8 +90,6 @@ jobs:
                   ".dockerignore", ".codex",
                   "LICENSE",
               ],
-              # .gitignore 排除了 config.json，但 Dockerfile 需要它
-              allow_patterns=["config.json"],
           )
           print(f"Deployed: https://huggingface.co/spaces/{repo_id}")
           PYEOF
