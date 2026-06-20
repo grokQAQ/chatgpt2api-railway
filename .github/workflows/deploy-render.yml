@@ -7,7 +7,7 @@ jobs:
   deploy-render:
     runs-on: ubuntu-latest
     steps:
-      - name: Get Render Owner ID and Create Service
+      - name: Create Render Service
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           PROXY_SUB_URL: ${{ secrets.SECRET_PROXY_SUB_URL }}
@@ -18,64 +18,61 @@ jobs:
           echo "Fetching Render owner ID..."
           OWNERS=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
             "https://api.render.com/v1/owners")
-          echo "Owners response: $OWNERS"
           
           OWNER_ID=$(echo "$OWNERS" | python3 -c "
           import sys, json
-          try:
-              data = json.load(sys.stdin)
-              if isinstance(data, list) and len(data) > 0:
-                  print(data[0].get('id', data[0].get('owner', {}).get('id', '')))
-              elif isinstance(data, dict):
-                  print(data.get('id', ''))
-          except:
-              pass
+          data = json.load(sys.stdin)
+          if isinstance(data, list) and len(data) > 0:
+              print(data[0]['owner']['id'])
           ")
           
           if [ -z "$OWNER_ID" ]; then
             echo "ERROR: Could not get owner ID"
+            echo "Owners response: $OWNERS"
             exit 1
           fi
           echo "Owner ID: $OWNER_ID"
           
-          # 2. 构建环境变量
-          ENV_VARS=$(python3 -c "
-          import json
-          env_vars = [
-            {'key': 'PROXY_SUB_URL', 'value': '''$PROXY_SUB_URL'''},
-            {'key': 'STORAGE_BACKEND', 'value': 'postgres'},
-            {'key': 'DATABASE_URL', 'value': '''$DATABASE_URL'''},
-            {'key': 'CHATGPT2API_AUTH_KEY', 'value': '''$AUTH_KEY'''},
-            {'key': 'LOG_LEVEL', 'value': 'warning'},
-          ]
-          print(json.dumps(env_vars))
-          ")
-
-          # 3. 创建服务
-          PAYLOAD=$(python3 -c "
+          # 2. 创建服务（使用 serviceDetails）
+          PAYLOAD=$(python3 << PYEOF
           import json
           payload = {
-            'type': 'web_service',
-            'name': 'chatgpt2api-register',
-            'ownerId': '$OWNER_ID',
-            'repo': 'https://github.com/NapCat52001/chatgpt2api',
-            'branch': 'main',
-            'plan': 'free',
-            'region': 'oregon',
-            'dockerfilePath': './Dockerfile.render',
-            'envVars': $ENV_VARS
+            "type": "web_service",
+            "name": "chatgpt2api-register",
+            "ownerId": "$OWNER_ID",
+            "repo": "https://github.com/NapCat52001/chatgpt2api",
+            "branch": "main",
+            "serviceDetails": {
+              "plan": "free",
+              "region": "oregon",
+              "dockerfilePath": "./Dockerfile.render",
+            },
+            "envVars": [
+              {"key": "PROXY_SUB_URL", "value": "$PROXY_SUB_URL"},
+              {"key": "STORAGE_BACKEND", "value": "postgres"},
+              {"key": "DATABASE_URL", "value": "$DATABASE_URL"},
+              {"key": "CHATGPT2API_AUTH_KEY", "value": "$AUTH_KEY"},
+              {"key": "LOG_LEVEL", "value": "warning"},
+            ]
           }
           print(json.dumps(payload))
-          ")
-
+          PYEOF
+          )
+          
           echo "Creating Render service..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.render.com/v1/services" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
-
+          
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
-
+          
           echo "HTTP Status: $HTTP_CODE"
           echo "Response: $BODY"
+          
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "Service created successfully!"
+          else
+            echo "Service creation failed"
+          fi
