@@ -12,4 +12,4 @@ jobs:
     steps:
       - name: Ping HF Space
         run: |
-          curl -fsS --max-time 30 "https://mansui52001-chatgpt2api.hf.space/" > /dev/null && echo "Ping OK" || echo "Ping failed"
+          curl -fsS --max-time 30 "https://mansui52001-chat2api.hf.space/" > /dev/null && echo "Ping OK" || echo "Ping failed"

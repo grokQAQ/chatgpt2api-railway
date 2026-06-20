@@ -1,5 +1,5 @@
 ---
-title: ChatGPT2API
+title: Chat2API
 emoji: 🚀
 colorFrom: blue
 colorTo: green

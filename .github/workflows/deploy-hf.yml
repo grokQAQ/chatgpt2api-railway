@@ -34,7 +34,7 @@ jobs:
           api = HfApi(token=token)
 
           username = api.whoami()["name"]
-          space_name = "chatgpt2api"
+          space_name = "chat2api"
           repo_id = f"{username}/{space_name}"
           print(f"Target: {repo_id}")
 
@@ -104,7 +104,7 @@ jobs:
     steps:
       - name: Ping HF Space
         run: |
-          curl -fsS "https://huggingface.co/spaces/mansui52001/chatgpt2api" > /dev/null && echo "Ping OK" || echo "Ping failed"
+          curl -fsS "https://huggingface.co/spaces/mansui52001/chat2api" > /dev/null && echo "Ping OK" || echo "Ping failed"
 
 # 定时保活：每 5 分钟 ping 一次
 # 使用单独的 workflow 文件避免与部署冲突
