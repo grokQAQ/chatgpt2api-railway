@@ -14,29 +14,19 @@ jobs:
           DATABASE_URL: ${{ secrets.SECRET_DATABASE_URL }}
           AUTH_KEY: ${{ secrets.SECRET_AUTH_KEY }}
         run: |
-          # 先检查是否已存在同名服务
-          EXISTING=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
-            "https://api.render.com/v1/services?name=chatgpt2api-register" | \
-            python3 -c "import sys,json; data=json.load(sys.stdin); print(data[0]['service']['id'] if data else '')" 2>/dev/null || echo "")
-          
-          if [ -n "$EXISTING" ]; then
-            echo "Service already exists: $EXISTING, skipping creation"
-            exit 0
-          fi
-          
           # 构建环境变量 JSON
           ENV_VARS=$(python3 -c "
           import json
           env_vars = [
-            {'key': 'PROXY_SUB_URL', 'value': '$PROXY_SUB_URL'},
+            {'key': 'PROXY_SUB_URL', 'value': '''$PROXY_SUB_URL'''},
             {'key': 'STORAGE_BACKEND', 'value': 'postgres'},
-            {'key': 'DATABASE_URL', 'value': '$DATABASE_URL'},
-            {'key': 'CHATGPT2API_AUTH_KEY', 'value': '$AUTH_KEY'},
+            {'key': 'DATABASE_URL', 'value': '''$DATABASE_URL'''},
+            {'key': 'CHATGPT2API_AUTH_KEY', 'value': '''$AUTH_KEY'''},
             {'key': 'LOG_LEVEL', 'value': 'warning'},
           ]
           print(json.dumps(env_vars))
           ")
-          
+
           # 创建服务
           PAYLOAD=$(python3 -c "
           import json
@@ -52,23 +42,17 @@ jobs:
           }
           print(json.dumps(payload))
           ")
-          
+
           echo "Creating Render service..."
-          RESPONSE=$(curl -s -X POST "https://api.render.com/v1/services" \
+          echo "Payload: $PAYLOAD"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.render.com/v1/services" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
-          
-          echo "$RESPONSE" | python3 -c "
-          import sys, json
-          try:
-              data = json.load(sys.stdin)
-              svc = data.get('service', data)
-              sid = svc.get('id', 'unknown')
-              sname = svc.get('name', 'unknown')
-              print(f'Service created: {sname} (ID: {sid})')
-              print(f'Dashboard: https://dashboard.render.com/web/{sid}')
-          except Exception as e:
-              print(f'Response: {sys.stdin.read() if hasattr(sys.stdin, \"read\") else \"parse error\"}')
-              print(f'Error: {e}')
-          "
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
