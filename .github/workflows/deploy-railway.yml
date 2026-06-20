@@ -15,7 +15,43 @@ jobs:
           DATABASE_URL: ${{ secrets.SECRET_DATABASE_URL }}
           AUTH_KEY: ${{ secrets.SECRET_AUTH_KEY }}
         run: |
-          # 使用第一个 Token 创建项目
+          # 先删除之前创建的同名项目
+          echo "=== Checking existing projects ==="
+          PROJECTS=$(curl -s -X POST \
+            https://backboard.railway.com/graphql/v2 \
+            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"query { projects { edges { node { id name } } } }"}')
+          
+          echo "$PROJECTS" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          for edge in data.get('data', {}).get('projects', {}).get('edges', []):
+              node = edge['node']
+              print(f\"  {node['name']}: {node['id']}\")
+          "
+          
+          # 删除同名项目
+          OLD_PROJECT_ID=$(echo "$PROJECTS" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          for edge in data.get('data', {}).get('projects', {}).get('edges', []):
+              if edge['node']['name'] == 'chatgpt2api-register':
+                  print(edge['node']['id'])
+                  break
+          ")
+          
+          if [ -n "$OLD_PROJECT_ID" ]; then
+            echo "Deleting old project: $OLD_PROJECT_ID"
+            curl -s -X POST \
+              https://backboard.railway.com/graphql/v2 \
+              -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\":\"mutation { projectDelete(id: \\\"$OLD_PROJECT_ID\\\") }\"}"
+            echo ""
+          fi
+          
+          # 创建项目
           echo "=== Creating Railway project ==="
           CREATE_RESULT=$(curl -s -X POST \
             https://backboard.railway.com/graphql/v2 \
@@ -29,7 +65,7 @@ jobs:
           import sys, json
           try:
               data = json.load(sys.stdin)
-              print(data['projectCreate']['id'])
+              print(data['data']['projectCreate']['id'])
           except Exception as e:
               print(f'ERROR: {e}', file=sys.stderr)
               sys.exit(1)
@@ -42,13 +78,13 @@ jobs:
           
           echo "Project ID: $PROJECT_ID"
           
-          # 获取环境和团队 ID
+          # 获取环境 ID
           echo "=== Getting environment ==="
           ENV_RESULT=$(curl -s -X POST \
             https://backboard.railway.com/graphql/v2 \
             -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
             -H "Content-Type: application/json" \
-            -d "{\"query\":\"query { project(id: \\\"$PROJECT_ID\\\") { environments { edges { node { id name } } } teams { edges { node { id name } } } } }\"}")
+            -d "{\"query\":\"query { project(id: \\\"$PROJECT_ID\\\") { environments { edges { node { id name } } } } }\"}")
           
           echo "Env result: $ENV_RESULT"
           
@@ -56,26 +92,14 @@ jobs:
           import sys, json
           try:
               data = json.load(sys.stdin)
-              envs = data['project']['environments']['edges']
+              envs = data['data']['project']['environments']['edges']
               if envs:
                   print(envs[0]['node']['id'])
-          except:
-              pass
-          ")
-          
-          TEAM_ID=$(echo "$ENV_RESULT" | python3 -c "
-          import sys, json
-          try:
-              data = json.load(sys.stdin)
-              teams = data['project']['teams']['edges']
-              if teams:
-                  print(teams[0]['node']['id'])
-          except:
-              pass
+          except Exception as e:
+              print(f'ERROR: {e}', file=sys.stderr)
           ")
           
           echo "Environment ID: $ENV_ID"
-          echo "Team ID: $TEAM_ID"
           
           # 创建服务（从 GitHub 仓库）
           echo "=== Creating service ==="
@@ -91,7 +115,7 @@ jobs:
           import sys, json
           try:
               data = json.load(sys.stdin)
-              print(data['serviceCreate']['id'])
+              print(data['data']['serviceCreate']['id'])
           except Exception as e:
               print(f'ERROR: {e}', file=sys.stderr)
               sys.exit(1)
@@ -101,23 +125,9 @@ jobs:
           
           # 设置环境变量
           echo "=== Setting environment variables ==="
-          VARS='[
-            {"key": "PROXY_SUB_URL", "value": "'"$PROXY_SUB_URL"'"},
-            {"key": "STORAGE_BACKEND", "value": "postgres"},
-            {"key": "DATABASE_URL", "value": "'"$DATABASE_URL"'"},
-            {"key": "CHATGPT2API_AUTH_KEY", "value": "'"$AUTH_KEY"'"},
-            {"key": "LOG_LEVEL", "value": "warning"}
-          ]'
-          
-          for var in $(echo "$VARS" | python3 -c "
-          import sys, json
-          vars = json.load(sys.stdin)
-          for v in vars:
-              print(json.dumps(v))
-          "); do
-            KEY=$(echo "$var" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])")
-            VALUE=$(echo "$var" | python3 -c "import sys,json; print(json.load(sys.stdin)['value'])")
-            
+          for KV in "PROXY_SUB_URL=$PROXY_SUB_URL" "STORAGE_BACKEND=postgres" "DATABASE_URL=$DATABASE_URL" "CHATGPT2API_AUTH_KEY=$AUTH_KEY" "LOG_LEVEL=warning"; do
+            KEY="${KV%%=*}"
+            VALUE="${KV#*=}"
             echo "  Setting $KEY..."
             curl -s -X POST \
               https://backboard.railway.com/graphql/v2 \
@@ -126,10 +136,12 @@ jobs:
               -d "{\"query\":\"mutation { variableUpsert(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\", name: \\\"$KEY\\\", value: \\\"$VALUE\\\" }) { id } }\"}" > /dev/null
           done
           
+          echo ""
           echo "=== Deployment triggered! ==="
           echo "Project: https://railway.com/project/$PROJECT_ID"
           echo ""
           echo "Next steps:"
           echo "1. Go to the Railway dashboard"
           echo "2. Click on the 'register' service"
-          echo "3. Go to Settings → Networking → Generate Domain"
+          echo "3. Wait for build to complete"
+          echo "4. Go to Settings -> Networking -> Generate Domain"
