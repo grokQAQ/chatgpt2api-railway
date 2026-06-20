@@ -1,0 +1,74 @@
+name: Deploy to Render
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Render Service
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          PROXY_SUB_URL: ${{ secrets.SECRET_PROXY_SUB_URL }}
+          DATABASE_URL: ${{ secrets.SECRET_DATABASE_URL }}
+          AUTH_KEY: ${{ secrets.SECRET_AUTH_KEY }}
+        run: |
+          # 先检查是否已存在同名服务
+          EXISTING=$(curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services?name=chatgpt2api-register" | \
+            python3 -c "import sys,json; data=json.load(sys.stdin); print(data[0]['service']['id'] if data else '')" 2>/dev/null || echo "")
+          
+          if [ -n "$EXISTING" ]; then
+            echo "Service already exists: $EXISTING, skipping creation"
+            exit 0
+          fi
+          
+          # 构建环境变量 JSON
+          ENV_VARS=$(python3 -c "
+          import json
+          env_vars = [
+            {'key': 'PROXY_SUB_URL', 'value': '$PROXY_SUB_URL'},
+            {'key': 'STORAGE_BACKEND', 'value': 'postgres'},
+            {'key': 'DATABASE_URL', 'value': '$DATABASE_URL'},
+            {'key': 'CHATGPT2API_AUTH_KEY', 'value': '$AUTH_KEY'},
+            {'key': 'LOG_LEVEL', 'value': 'warning'},
+          ]
+          print(json.dumps(env_vars))
+          ")
+          
+          # 创建服务
+          PAYLOAD=$(python3 -c "
+          import json
+          payload = {
+            'type': 'web_service',
+            'name': 'chatgpt2api-register',
+            'repo': 'https://github.com/NapCat52001/chatgpt2api',
+            'branch': 'main',
+            'plan': 'free',
+            'region': 'oregon',
+            'dockerfilePath': './Dockerfile.render',
+            'envVars': $ENV_VARS
+          }
+          print(json.dumps(payload))
+          ")
+          
+          echo "Creating Render service..."
+          RESPONSE=$(curl -s -X POST "https://api.render.com/v1/services" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+          
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              svc = data.get('service', data)
+              sid = svc.get('id', 'unknown')
+              sname = svc.get('name', 'unknown')
+              print(f'Service created: {sname} (ID: {sid})')
+              print(f'Dashboard: https://dashboard.render.com/web/{sid}')
+          except Exception as e:
+              print(f'Response: {sys.stdin.read() if hasattr(sys.stdin, \"read\") else \"parse error\"}')
+              print(f'Error: {e}')
+          "
