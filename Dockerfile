@@ -43,8 +43,12 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY main.py ./
-COPY config.json ./
 COPY VERSION ./
+# config.json 可能被 .gitignore 排除，如果不存在则生成默认配置
+COPY config.json* ./
+RUN if [ ! -f config.json ]; then \
+    printf '{\n  "auth-key": "chatgpt2api",\n  "refresh_account_interval_minute": 5\n}\n' > config.json; \
+    fi
 COPY api ./api
 COPY services ./services
 COPY utils ./utils
