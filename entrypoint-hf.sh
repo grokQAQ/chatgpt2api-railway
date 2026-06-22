@@ -1,6 +1,7 @@
 #!/bin/bash
 # chatgpt2api HF Space 版 entrypoint：直连模式 + FlareSolverr
 # HF Space IP 信誉高，直连能过 Cloudflare，不需要代理
+# FlareSolverr 使用 Xvfb + head-full 模式（headless 会被 Cloudflare 检测）
 
 echo "[entrypoint] === chatgpt2api (HF Space) ===" >&2
 
@@ -19,26 +20,29 @@ export CHATGPT2API_PROXY_RUNTIME_FORCE="${CHATGPT2API_PROXY_RUNTIME_FORCE:-true}
 echo "[entrypoint] Running init_proxy_config.py..." >&2
 python3 /app/scripts/init_proxy_config.py 2>&2
 
-# 3. 启动 FlareSolverr（Chromium headless 模式，直连不走代理）
+# 3. 启动 FlareSolverr
+# 重要：不设 DISPLAY 空值，不设 CHROME_EXE_PATH
+# FlareSolverr 会通过 xvfbwrapper 自动启动 Xvfb 虚拟显示
+# 并以 head-full 模式运行（headless 会被 Cloudflare 检测）
 echo "[entrypoint] Starting FlareSolverr on port 8191..." >&2
 cd /opt/flaresolverr
-DISPLAY= PYTHONPATH=/opt/flaresolverr/src:$PYTHONPATH \
+PYTHONPATH=/opt/flaresolverr/src:$PYTHONPATH \
 LOG_LEVEL=${FLARESOLVERR_LOG_LEVEL:-info} \
-CHROME_EXE_PATH=$(which chromium) \
+HEADLESS=true \
 python -m src.flaresolverr > /tmp/flaresolverr.log 2>&1 &
 FLARE_PID=$!
 cd /app
 
-# 等待 FlareSolverr 就绪（最多 30 秒）
+# 等待 FlareSolverr 就绪（最多 60 秒，首次启动需要下载 chromedriver）
 echo "[entrypoint] Waiting for FlareSolverr..." >&2
-for i in $(seq 1 30); do
+for i in $(seq 1 60); do
     if curl -s http://127.0.0.1:8191/ >/dev/null 2>&1; then
         echo "[entrypoint] FlareSolverr is ready!" >&2
         break
     fi
     if ! kill -0 $FLARE_PID 2>/dev/null; then
         echo "[entrypoint] WARNING: FlareSolverr died, checking log..." >&2
-        tail -20 /tmp/flaresolverr.log >&2 2>/dev/null
+        tail -30 /tmp/flaresolverr.log >&2 2>/dev/null
         break
     fi
     sleep 1

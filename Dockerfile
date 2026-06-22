@@ -22,8 +22,7 @@ ARG TARGETARCH
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy \
-    CHROMIUM_FLAGS="--headless=new --no-sandbox --disable-gpu --disable-software-rasterizer --disable-dev-shm-usage --js-flags=--max-old-space-size=256"
+    UV_LINK_MODE=copy
 
 WORKDIR /app
 
@@ -33,6 +32,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
         openssl \
         chromium \
+        chromium-driver \
+        xvfb \
         curl \
         unzip \
         && rm -rf /var/lib/apt/lists/*
@@ -48,11 +49,12 @@ RUN ARCH=$(case "$(dpkg --print-architecture)" in \
     && chmod +x /usr/local/bin/xray \
     && rm -f /tmp/xray.zip
 
-# 安装 FlareSolverr
+# 安装 FlareSolverr（含 xvfbwrapper 用于 Xvfb 虚拟显示）
 RUN pip install --no-cache-dir uv \
     && git clone --depth 1 https://github.com/FlareSolverr/FlareSolverr.git /opt/flaresolverr \
     && cd /opt/flaresolverr \
     && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir xvfbwrapper \
     && rm -rf /root/.cache/pip /opt/flaresolverr/.git
 
 COPY pyproject.toml uv.lock ./

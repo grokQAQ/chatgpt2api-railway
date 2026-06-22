@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 import json
 import re
@@ -14,6 +15,8 @@ from urllib.parse import quote, urlparse
 from curl_cffi.requests import Session
 
 from services.config import config
+
+logger = logging.getLogger(__name__)
 
 
 FlareSolverrRequestMethod = Callable[[str, bytes, dict[str, str], float], bytes]
@@ -105,6 +108,7 @@ class FlareSolverrClearanceProvider:
 
     def get_clearance(self, target_url: str, proxy_url: str = "", timeout_sec: int = 60) -> ClearanceBundle | None:
         if not self.flaresolverr_url:
+            logger.warning("FlareSolverr URL is empty, cannot get clearance")
             return None
 
         timeout = _coerce_timeout(timeout_sec)
@@ -115,7 +119,13 @@ class FlareSolverrClearanceProvider:
         }
         proxy_url = normalize_proxy_url(proxy_url)
         if proxy_url:
-            payload["proxy"] = {"url": proxy_url}
+            # FlareSolverr's Chromium uses --proxy-server which only supports
+            # socks5:// not socks5h://. Convert back for FlareSolverr compatibility.
+            fs_proxy_url = proxy_url.replace("socks5h://", "socks5://", 1)
+            payload["proxy"] = {"url": fs_proxy_url}
+            logger.info("FlareSolverr request with proxy: %s -> %s", proxy_url, fs_proxy_url)
+        else:
+            logger.info("FlareSolverr request without proxy (direct mode)")
 
         endpoint = f"{self.flaresolverr_url}/v1"
         try:
@@ -127,19 +137,40 @@ class FlareSolverrClearanceProvider:
                 timeout,
             )
             data = json.loads(raw_response.decode("utf-8") if isinstance(raw_response, bytes) else raw_response)
-        except Exception:
+        except Exception as exc:
+            logger.error("FlareSolverr request failed: %s", exc)
             return None
 
-        if not isinstance(data, dict) or str(data.get("status") or "").lower() != "ok":
+        if not isinstance(data, dict):
+            logger.error("FlareSolverr returned non-dict response: %s", type(data).__name__)
             return None
+
+        status = str(data.get("status") or "").lower()
+        if status != "ok":
+            logger.error(
+                "FlareSolverr returned status=%s, message=%s",
+                status,
+                data.get("message") or data.get("error") or "unknown",
+            )
+            return None
+
         solution = data.get("solution")
         if not isinstance(solution, dict):
+            logger.error("FlareSolverr returned no solution dict: %s", type(solution).__name__ if solution is not None else "None")
             return None
 
         target_host = _host_from_url(target_url)
         cookies = _filter_flaresolverr_cookies(solution.get("cookies"), target_host)
         user_agent = str(solution.get("userAgent") or "").strip()
+        url_result = str(solution.get("url") or "").strip()
+        logger.info(
+            "FlareSolverr result: url=%s, cookies_count=%d, user_agent=%s",
+            url_result[:100] if url_result else "N/A",
+            len(cookies) if isinstance(cookies, list) else 0,
+            user_agent[:50] if user_agent else "N/A",
+        )
         if not cookies and not user_agent:
+            logger.warning("FlareSolverr returned OK but no cookies and no user_agent")
             return None
         return ClearanceBundle(
             target_host=target_host,

@@ -3,12 +3,7 @@ set -e
 
 echo "[entrypoint] === chatgpt2api Register Bot (Render) ==="
 
-# 1. 启动 Xvfb（Chromium 需要）
-echo "[entrypoint] Starting Xvfb..."
-Xvfb :99 -screen 0 1024x768x16 &
-sleep 1
-
-# 2. 启动 xray 代理
+# 1. 启动 xray 代理
 if [ -n "$PROXY_SUB_URL" ]; then
     echo "[entrypoint] Fetching proxy subscription..."
     if python3 /app/scripts/fetch_sub.py; then
@@ -49,31 +44,35 @@ with open('/app/config.json','w') as f: json.dump(cfg,f,indent=2)
 "
 fi
 
-# 3. 启动 FlareSolverr
+# 2. 启动 FlareSolverr
+# 重要：不手动启动 Xvfb，不设 CHROME_EXE_PATH
+# FlareSolverr 会通过 xvfbwrapper 自动启动 Xvfb 虚拟显示
+# 并以 head-full 模式运行（headless 会被 Cloudflare 检测）
 echo "[entrypoint] Starting FlareSolverr on port 8191..."
 cd /opt/flaresolverr
 PYTHONPATH=/opt/flaresolverr/src:$PYTHONPATH \
-LOG_LEVEL=${LOG_LEVEL:-warning} \
-CHROME_EXE_PATH=$(which chromium) \
-python -m src.flaresolverr &
+LOG_LEVEL=${LOG_LEVEL:-info} \
+HEADLESS=true \
+python -m src.flaresolverr > /tmp/flaresolverr.log 2>&1 &
 FLARE_PID=$!
 cd /app
 
-# 等待 FlareSolverr 就绪（最多 30 秒）
+# 等待 FlareSolverr 就绪（最多 60 秒，首次启动需要下载 chromedriver）
 echo "[entrypoint] Waiting for FlareSolverr..."
-for i in $(seq 1 30); do
+for i in $(seq 1 60); do
     if curl -s http://127.0.0.1:8191/ > /dev/null 2>&1; then
         echo "[entrypoint] FlareSolverr is ready!"
         break
     fi
     if ! kill -0 $FLARE_PID 2>/dev/null; then
-        echo "[entrypoint] WARNING: FlareSolverr died, continuing without it"
+        echo "[entrypoint] WARNING: FlareSolverr died, checking log..."
+        tail -30 /tmp/flaresolverr.log >&2 2>/dev/null
         break
     fi
     sleep 1
 done
 
-# 4. 启动主应用（Render 默认端口 10000）
+# 3. 启动主应用（Render 默认端口 10000）
 PORT=${PORT:-10000}
 echo "[entrypoint] Starting chatgpt2api on port $PORT..."
 exec uv run uvicorn main:app --host 0.0.0.0 --port $PORT --access-log
