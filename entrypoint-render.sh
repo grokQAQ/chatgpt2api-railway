@@ -48,13 +48,15 @@ fi
 # 重要：不手动启动 Xvfb，不设 CHROME_EXE_PATH
 # FlareSolverr 会通过 xvfbwrapper 自动启动 Xvfb 虚拟显示
 # 并以 head-full 模式运行（headless 会被 Cloudflare 检测）
-# 绑定 127.0.0.1 避免 Railway 自动检测到 8191 端口
+# HOST=127.0.0.1 绑定本地，避免 Railway 把流量路由到 FlareSolverr
+# PORT=8191 明确指定，避免读到 Railway 的 PORT=10000
 echo "[entrypoint] Starting FlareSolverr on 127.0.0.1:8191..."
 cd /opt/flaresolverr
 PYTHONPATH=/opt/flaresolverr/src:$PYTHONPATH \
 LOG_LEVEL=${LOG_LEVEL:-info} \
 HEADLESS=true \
-LISTEN_ADDRESS=127.0.0.1 \
+HOST=127.0.0.1 \
+PORT=8191 \
 python -m src.flaresolverr > /tmp/flaresolverr.log 2>&1 &
 FLARE_PID=$!
 cd /app
