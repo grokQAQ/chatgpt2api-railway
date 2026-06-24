@@ -10,7 +10,8 @@ web_dist
 .venv
 .idea
 data
-config.json
+# config.json is tracked for Railway deployment (Dockerfile COPY)
+# data/config.json (runtime) is still ignored via data/ above
 edit
 
 docker-compose-local.yml

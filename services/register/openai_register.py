@@ -211,7 +211,7 @@ def _is_cloudflare_challenge(resp) -> bool:
 
 
 def _mail_config() -> dict:
-    return {**config["mail"], "proxy": config["proxy"]}
+    return dict(config["mail"])
 
 
 def _authorize_landed_page(resp) -> str:
@@ -248,7 +248,13 @@ from utils.sentinel import SentinelTokenGenerator, build_sentinel_token as _buil
 
 def build_sentinel_token(session: requests.Session, device_id: str, flow: str) -> str:
     """请求 sentinel token，返回 sentinel header 字符串（兼容旧接口）。"""
-    sentinel_val, _oai_sc_val = _build_sentinel_token_tuple(session, device_id, flow, user_agent=user_agent, sec_ch_ua=sec_ch_ua)
+    sentinel_val, oai_sc_val = _build_sentinel_token_tuple(session, device_id, flow, user_agent=user_agent, sec_ch_ua=sec_ch_ua)
+    if oai_sc_val:
+        for domain in (".openai.com", "openai.com", ".auth.openai.com", "auth.openai.com"):
+            try:
+                session.cookies.set("oai-sc", oai_sc_val, domain=domain)
+            except Exception:
+                continue
     return sentinel_val
 
 
@@ -473,9 +479,6 @@ class PlatformRegistrar:
             status = getattr(resp, "status_code", "unknown")
             raise RuntimeError(error or f"platform_authorize_http_{status}{detail}, {debug}")
         landed = _authorize_landed_page(resp)
-        # DEBUG: 打印 authorize 之后的 cookies
-        _auth_cookie_debug = {c.name: c.domain for c in self.session.cookies}
-        step(index, f"authorize 后 cookies: {json.dumps(_auth_cookie_debug, ensure_ascii=False)}")
         # 仅打日志，不据此中断：authorize 落地页无法可靠区分注册/登录，
         # 真正的判定交给 user/register（失败会 dump 完整响应）。
         step(index, f"platform authorize 完成[{landed or '?'}] url={str(getattr(resp, 'url', '') or '')[:160]}")
@@ -486,9 +489,6 @@ class PlatformRegistrar:
         headers = self._json_headers(f"{auth_base}/create-account/password")
         headers["openai-sentinel-token"] = build_sentinel_token(self.session, self.device_id, "username_password_create")
         headers = _headers_with_clearance(headers, url, self.proxy, self.clearance_user_agent)
-        # DEBUG: 打印 session cookies 帮助排查 invalid_state
-        _cookie_debug = {c.name: c.domain for c in self.session.cookies}
-        step(index, f"register 请求前 cookies: {json.dumps(_cookie_debug, ensure_ascii=False)}")
         resp, error = request_with_local_retry(self.session, "post", url, json={"username": email, "password": password}, headers=headers, verify=False)
         if _is_cloudflare_challenge(resp):
             bundle = self._refresh_cloudflare_clearance(auth_base, index)
