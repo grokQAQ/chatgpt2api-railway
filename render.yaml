@@ -6,7 +6,7 @@ services:
     plan: free
     envVars:
       - key: PROXY_SUB_URL
-        sync: false
+        value: https://random-argo-production.up.railway.app/r9x2m7k4
       - key: STORAGE_BACKEND
         value: postgres
       - key: DATABASE_URL
