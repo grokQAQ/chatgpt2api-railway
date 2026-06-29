@@ -10,7 +10,7 @@ services:
       - key: STORAGE_BACKEND
         value: postgres
       - key: DATABASE_URL
-        sync: false
+        value: postgresql://gpt:REDACTED_DB_PASSWORD@gpt520-17269.jxf.gcp-us-west2.cockroachlabs.cloud:26257/defaultdb?sslmode=require
       - key: CHATGPT2API_AUTH_KEY
         sync: false
       - key: LOG_LEVEL
