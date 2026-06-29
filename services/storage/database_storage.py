@@ -83,6 +83,30 @@ class DatabaseStorageBackend(StorageBackend):
         """保存账号数据到数据库（UPSERT 模式，不会覆盖其他实例写入的新数据）"""
         self._upsert_rows(AccountModel, accounts, "access_token")
 
+    def delete_accounts(self, tokens: list[str]) -> int:
+        """从数据库中删除指定 access_token 的账号，返回删除数量。"""
+        if not tokens:
+            return 0
+        for attempt in range(_MAX_TXN_RETRIES):
+            session = self.Session()
+            try:
+                count = session.query(AccountModel).filter(
+                    AccountModel.access_token.in_(tokens)
+                ).delete(synchronize_session="fetch")
+                session.commit()
+                return count
+            except Exception as e:
+                session.rollback()
+                if self._is_serialization_error(e) and attempt < _MAX_TXN_RETRIES - 1:
+                    delay = _TXN_RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"[storage] CockroachDB SerializationFailure，第{attempt + 1}次重试，等待{delay:.1f}s...")
+                    time.sleep(delay)
+                    continue
+                raise e
+            finally:
+                session.close()
+        return 0
+
     def load_auth_keys(self) -> list[dict[str, Any]]:
         """加载所有鉴权密钥数据"""
         return self._load_rows(AuthKeyModel)

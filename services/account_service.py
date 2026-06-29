@@ -128,6 +128,15 @@ class AccountService:
     def _save_accounts(self) -> None:
         self.storage.save_accounts(list(self._accounts.values()))
 
+    def _delete_accounts_from_db(self, tokens: list[str]) -> None:
+        """从数据库中删除指定账号，防止 DB 同步恢复已删除的账号"""
+        try:
+            count = self.storage.delete_accounts(tokens)
+            if count > 0:
+                print(f"[account_service] 从数据库删除了 {count} 个账号")
+        except Exception as e:
+            print(f"[account_service] 从数据库删除账号失败: {e}")
+
     @staticmethod
     def _is_image_account_available(account: dict) -> bool:
         if not isinstance(account, dict):
@@ -1192,6 +1201,8 @@ class AccountService:
                 else:
                     self._index = 0
                 self._save_accounts()
+                # 同时从数据库中删除，防止 DB 同步恢复已删除的账号
+                self._delete_accounts_from_db(list(target_set))
                 log_service.add(LOG_TYPE_ACCOUNT, f"删除 {removed} 个账号", {"removed": removed})
             items = [dict(item) for item in self._accounts.values()]
         return {"removed": removed, "items": items}
