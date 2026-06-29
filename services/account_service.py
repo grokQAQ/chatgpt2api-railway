@@ -56,6 +56,37 @@ class AccountService:
         self._image_inflight: dict[str, int] = {}
         self._token_aliases: dict[str, str] = {}
         self._cumulative_total = self._load_cumulative_total()
+        self._start_db_sync_thread()
+
+    def _start_db_sync_thread(self) -> None:
+        """启动后台线程，定时从数据库重新加载账号数据（多实例同步）。"""
+        import threading
+        def _sync_loop():
+            while True:
+                try:
+                    time.sleep(40)
+                    self.reload_from_db()
+                except Exception:
+                    pass
+        t = threading.Thread(target=_sync_loop, daemon=True, name="db-sync")
+        t.start()
+
+    def reload_from_db(self) -> None:
+        """从数据库重新加载账号数据到内存。"""
+        try:
+            remote = self._load_accounts()
+            with self._lock:
+                merged = dict(self._accounts)
+                new_count = 0
+                for token, account in remote.items():
+                    if token not in merged:
+                        merged[token] = account
+                        new_count += 1
+                if new_count > 0:
+                    self._accounts = merged
+                    print(f"[account_sync] 从数据库同步到 {new_count} 个新账号，当前共 {len(self._accounts)} 个")
+        except Exception as e:
+            print(f"[account_sync] 同步失败: {e}")
 
     def _get_cumulative_file(self) -> Path:
         from services.config import DATA_DIR
