@@ -73,6 +73,6 @@ COPY --from=web-build /app/web/out ./web_dist
 COPY entrypoint-render.sh ./
 RUN chmod +x entrypoint-render.sh
 
-EXPOSE 10000
+EXPOSE 8080
 
 ENTRYPOINT ["./entrypoint-render.sh"]
