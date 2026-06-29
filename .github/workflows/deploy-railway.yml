@@ -1,170 +1,72 @@
-name: Deploy to Railway
+name: Build and Deploy to Railway
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
       - name: Deploy to Railway via API
         env:
-          RAILWAY_TOKEN_1: ${{ secrets.RAILWAY_TOKEN_1 }}
-          RAILWAY_TOKEN_2: ${{ secrets.RAILWAY_TOKEN_2 }}
-          PROXY_SUB_URL: ${{ secrets.SECRET_PROXY_SUB_URL }}
-          DATABASE_URL: ${{ secrets.SECRET_DATABASE_URL }}
-          AUTH_KEY: ${{ secrets.SECRET_AUTH_KEY }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+          ENV_ID: ${{ secrets.RAILWAY_ENVIRONMENT_ID }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
         run: |
-          # 先删除之前创建的同名项目
-          echo "=== Checking existing projects ==="
-          PROJECTS=$(curl -s -X POST \
-            https://backboard.railway.com/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+          # Disconnect existing source
+          curl -s -X POST "https://backboard.railway.app/graphql/v2" \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"query":"query { projects { edges { node { id name } } } }"}')
+            -d '{"query":"mutation { serviceDisconnect(id: \"'$SERVICE_ID'\") { id } }"}'
           
-          echo "$PROJECTS" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          for edge in data.get('data', {}).get('projects', {}).get('edges', []):
-              node = edge['node']
-              print(f\"  {node['name']}: {node['id']}\")
-          "
-          
-          # 删除同名项目
-          OLD_PROJECT_ID=$(echo "$PROJECTS" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          for edge in data.get('data', {}).get('projects', {}).get('edges', []):
-              if edge['node']['name'] == 'chatgpt2api-register':
-                  print(edge['node']['id'])
-                  break
-          ")
-          
-          if [ -n "$OLD_PROJECT_ID" ]; then
-            echo "Deleting old project: $OLD_PROJECT_ID"
-            curl -s -X POST \
-              https://backboard.railway.com/graphql/v2 \
-              -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
-              -H "Content-Type: application/json" \
-              -d "{\"query\":\"mutation { projectDelete(id: \\\"$OLD_PROJECT_ID\\\") }\"}"
-            echo ""
-          fi
-          
-          # 创建项目
-          echo "=== Creating Railway project ==="
-          CREATE_RESULT=$(curl -s -X POST \
-            https://backboard.railway.com/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+          # Connect to Docker image
+          curl -s -X POST "https://backboard.railway.app/graphql/v2" \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"query":"mutation { projectCreate(input: { name: \"chatgpt2api-register\" }) { id name } }"}')
+            -d '{"query":"mutation { serviceConnect(id: \"'$SERVICE_ID'\", input: { image: \"'$IMAGE'\" }) { id name } }"}'
           
-          echo "Create result: $CREATE_RESULT"
-          
-          PROJECT_ID=$(echo "$CREATE_RESULT" | python3 -c "
-          import sys, json
-          try:
-              data = json.load(sys.stdin)
-              print(data['data']['projectCreate']['id'])
-          except Exception as e:
-              print(f'ERROR: {e}', file=sys.stderr)
-              sys.exit(1)
-          ")
-          
-          if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "None" ]; then
-            echo "Failed to create project"
-            exit 1
-          fi
-          
-          echo "Project ID: $PROJECT_ID"
-          
-          # 获取环境 ID
-          echo "=== Getting environment ==="
-          ENV_RESULT=$(curl -s -X POST \
-            https://backboard.railway.com/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
+          # Trigger deployment
+          curl -s -X POST "https://backboard.railway.app/graphql/v2" \
+            -H "Authorization: Bearer $RAILWAY_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"query\":\"query { project(id: \\\"$PROJECT_ID\\\") { environments { edges { node { id name } } } } }\"}")
+            -d '{"query":"mutation { serviceInstanceDeploy(environmentId: \"'$ENV_ID'\", serviceId: \"'$SERVICE_ID'\") }"}'
           
-          echo "Env result: $ENV_RESULT"
-          
-          ENV_ID=$(echo "$ENV_RESULT" | python3 -c "
-          import sys, json
-          try:
-              data = json.load(sys.stdin)
-              envs = data['data']['project']['environments']['edges']
-              if envs:
-                  print(envs[0]['node']['id'])
-          except Exception as e:
-              print(f'ERROR: {e}', file=sys.stderr)
-          ")
-          
-          echo "Environment ID: $ENV_ID"
-          
-          # 创建空服务
-          echo "=== Creating service ==="
-          SVC_RESULT=$(curl -s -X POST \
-            https://backboard.railway.com/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation { serviceCreate(input: { projectId: \\\"$PROJECT_ID\\\", name: \\\"register\\\" }) { id name } }\"}")
-          
-          echo "Service result: $SVC_RESULT"
-          
-          SERVICE_ID=$(echo "$SVC_RESULT" | python3 -c "
-          import sys, json
-          try:
-              data = json.load(sys.stdin)
-              print(data['data']['serviceCreate']['id'])
-          except Exception as e:
-              print(f'ERROR: {e}', file=sys.stderr)
-              sys.exit(1)
-          ")
-          
-          echo "Service ID: $SERVICE_ID"
-          
-          # 连接 GitHub 仓库并指定分支
-          echo "=== Connecting GitHub repo (render branch) ==="
-          CONNECT_RESULT=$(curl -s -X POST \
-            https://backboard.railway.com/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation { serviceConnect(id: \\\"$SERVICE_ID\\\", input: { repo: \\\"NapCat52001/chatgpt2api\\\", branch: \\\"render\\\" }) { id } }\"}")
-          
-          echo "Connect result: $CONNECT_RESULT"
-          
-          # 设置环境变量（variableUpsert 返回 Boolean，不需要子字段选择）
-          echo "=== Setting environment variables ==="
-          for KV in "PROXY_SUB_URL=$PROXY_SUB_URL" "STORAGE_BACKEND=postgres" "DATABASE_URL=$DATABASE_URL" "CHATGPT2API_AUTH_KEY=$AUTH_KEY" "LOG_LEVEL=warning"; do
-            KEY="${KV%%=*}"
-            VALUE="${KV#*=}"
-            echo "  Setting $KEY..."
-            RESULT=$(curl -s -X POST \
-              https://backboard.railway.com/graphql/v2 \
-              -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
-              -H "Content-Type: application/json" \
-              -d "{\"query\":\"mutation { variableUpsert(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\", name: \\\"$KEY\\\", value: \\\"$VALUE\\\", skipDeploys: true }) }\"}")
-            echo "  Result: $RESULT"
-          done
-
-          # 触发部署
-          echo "=== Triggering deployment ==="
-          DEPLOY_RESULT=$(curl -s -X POST \
-            https://backboard.railway.com/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation { deploy(input: { projectId: \\\"$PROJECT_ID\\\", environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\" }) }\"}")
-          echo "Deploy result: $DEPLOY_RESULT"
-
-          # 生成域名
-          echo "=== Generating domain ==="
-          DOMAIN_RESULT=$(curl -s -X POST \
-            https://backboard.railway.com/graphql/v2 \
-            -H "Authorization: Bearer $RAILWAY_TOKEN_1" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\":\"mutation { serviceDomainCreate(input: { environmentId: \\\"$ENV_ID\\\", serviceId: \\\"$SERVICE_ID\\\", targetPort: 10000 }) { id domain } }\"}")
-          echo "Domain result: $DOMAIN_RESULT"
-
-          echo ""
-          echo "=== Deployment complete! ==="
-          echo "Project: https://railway.com/project/$PROJECT_ID"
+          echo "Deployment triggered!"
