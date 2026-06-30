@@ -1766,4 +1766,4 @@ class AccountService:
         }
 
 
-account_service = AccountService(config.get_storage_backend())</think>
+account_service = AccountService(config.get_storage_backend())
