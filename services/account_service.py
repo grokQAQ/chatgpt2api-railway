@@ -99,7 +99,8 @@ class AccountService:
                         if old not in deleted_tokens and new not in deleted_tokens
                     }
 
-                # 合并远程账号数据：添加新账号 + 更新已有账号
+                # 合并远程账号数据：添加新账号 + 用远程数据更新已有账号
+                # 远程数据来自数据库，代表最近一次写入的状态，总是用远程覆盖本地
                 merged = dict(self._accounts)
                 new_count = 0
                 updated_count = 0
@@ -110,19 +111,15 @@ class AccountService:
                         merged[token] = account
                         new_count += 1
                     else:
-                        # 远程数据较新时合并更新（保留本地运行时状态）
+                        # 用远程数据覆盖本地（保留本地运行时字段）
                         local = merged[token]
-                        remote_updated = self._parse_time(account.get("last_used_at") or account.get("last_token_refresh_at"))
-                        local_updated = self._parse_time(local.get("last_used_at") or local.get("last_token_refresh_at"))
-                        if remote_updated is not None and (local_updated is None or remote_updated > local_updated):
-                            # 保留本地运行时字段
-                            runtime_fields = {"image_inflight"}
-                            merged_account = dict(account)
-                            for field in runtime_fields:
-                                if field in local and field not in merged_account:
-                                    merged_account[field] = local[field]
-                            merged[token] = merged_account
-                            updated_count += 1
+                        runtime_fields = {"image_inflight"}
+                        merged_account = dict(account)
+                        for field in runtime_fields:
+                            if field in local and field not in merged_account:
+                                merged_account[field] = local[field]
+                        merged[token] = merged_account
+                        updated_count += 1
 
                 if removed_count > 0 or new_count > 0 or updated_count > 0:
                     self._accounts = merged
