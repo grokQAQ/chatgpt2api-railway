@@ -1,5 +1,5 @@
 {
-  "auth-key": "REDACTED_AUTH_KEY",
+  "auth-key": "sk-MANSUI640438859@qq.com",
   "refresh_account_interval_minute": 5,
   "image_retention_days": 15,
   "image_poll_timeout_secs": 120,
