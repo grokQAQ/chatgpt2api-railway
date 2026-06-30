@@ -99,22 +99,39 @@ class AccountService:
                         if old not in deleted_tokens and new not in deleted_tokens
                     }
 
-                # 添加新账号（排除已删除的）
+                # 合并远程账号数据：添加新账号 + 更新已有账号
                 merged = dict(self._accounts)
                 new_count = 0
+                updated_count = 0
                 for token, account in remote.items():
-                    if token not in merged and token not in deleted_tokens:
+                    if token in deleted_tokens:
+                        continue
+                    if token not in merged:
                         merged[token] = account
                         new_count += 1
+                    else:
+                        # 远程数据较新时合并更新（保留本地运行时状态）
+                        local = merged[token]
+                        remote_updated = self._parse_time(account.get("last_used_at") or account.get("last_token_refresh_at"))
+                        local_updated = self._parse_time(local.get("last_used_at") or local.get("last_token_refresh_at"))
+                        if remote_updated is not None and (local_updated is None or remote_updated > local_updated):
+                            # 保留本地运行时字段
+                            runtime_fields = {"image_inflight"}
+                            merged_account = dict(account)
+                            for field in runtime_fields:
+                                if field in local and field not in merged_account:
+                                    merged_account[field] = local[field]
+                            merged[token] = merged_account
+                            updated_count += 1
 
-                if removed_count > 0 or new_count > 0:
+                if removed_count > 0 or new_count > 0 or updated_count > 0:
                     self._accounts = merged
                     if removed_count > 0:
                         if self._accounts:
                             self._index %= len(self._accounts)
                         else:
                             self._index = 0
-                    print(f"[account_sync] 同步: 新增 {new_count} 个, 移除 {removed_count} 个已删除, 当前共 {len(self._accounts)} 个")
+                    print(f"[account_sync] 同步: 新增 {new_count} 个, 更新 {updated_count} 个, 移除 {removed_count} 个已删除, 当前共 {len(self._accounts)} 个")
         except Exception as e:
             print(f"[account_sync] 同步失败: {e}")
 
