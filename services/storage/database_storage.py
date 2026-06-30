@@ -4,7 +4,7 @@ import json
 import time
 from typing import Any
 
-from sqlalchemy import Column, String, Text, create_engine, Integer, text
+from sqlalchemy import Boolean, Column, String, Text, create_engine, Integer, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -27,6 +27,8 @@ class AccountModel(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     access_token = Column(String(2048), unique=True, nullable=False, index=True)
     data = Column(Text, nullable=False)  # JSON 格式存储完整账号数据
+    deleted = Column(Boolean, default=False, nullable=False)  # 软删除标记
+    deleted_at = Column(String(64), nullable=True)  # 软删除时间
 
 
 class AuthKeyModel(Base):
@@ -63,12 +65,15 @@ class DatabaseStorageBackend(StorageBackend):
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
 
+        # 迁移：为已有表添加 deleted / deleted_at 列
+        self._migrate_soft_delete_columns()
+
     def load_accounts(self) -> list[dict[str, Any]]:
-        """从数据库加载账号数据"""
+        """从数据库加载账号数据（跳过已软删除的记录）"""
         session = self.Session()
         try:
             accounts = []
-            for row in session.query(AccountModel).all():
+            for row in session.query(AccountModel).filter(AccountModel.deleted == False):  # noqa: E712
                 try:
                     account_data = json.loads(row.data)
                     if isinstance(account_data, dict):
@@ -84,14 +89,31 @@ class DatabaseStorageBackend(StorageBackend):
         self._upsert_rows(AccountModel, accounts, "access_token")
 
     def delete_accounts(self, tokens: list[str]) -> int:
-        """从数据库中删除指定 access_token 的账号，返回删除数量。"""
+        """软删除指定 access_token 的账号（标记 deleted=True），返回删除数量。
+        同时清理超过 7 天的旧软删除记录。
+        """
         if not tokens:
             return 0
         for attempt in range(_MAX_TXN_RETRIES):
             session = self.Session()
             try:
-                count = session.query(AccountModel).filter(
-                    AccountModel.access_token.in_(tokens)
+                now_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                rows = session.query(AccountModel).filter(
+                    AccountModel.access_token.in_(tokens),
+                    AccountModel.deleted == False,  # noqa: E712
+                ).all()
+                count = len(rows)
+                for row in rows:
+                    row.deleted = True
+                    row.deleted_at = now_str
+                # 清理超过 7 天的旧软删除记录
+                cutoff = time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ",
+                    time.gmtime(time.time() - 7 * 24 * 3600),
+                )
+                session.query(AccountModel).filter(
+                    AccountModel.deleted == True,  # noqa: E712
+                    AccountModel.deleted_at < cutoff,
                 ).delete(synchronize_session="fetch")
                 session.commit()
                 return count
@@ -157,6 +179,7 @@ class DatabaseStorageBackend(StorageBackend):
     ) -> None:
         """UPSERT 模式：已有的更新 data，没有的插入，不删除其他实例写入的数据。
         遇到 CockroachDB SerializationFailure 自动重试（最多3次，指数退避）。
+        对于 AccountModel：跳过已软删除的行，防止其他实例把已删除账号写回数据库。
         """
         for attempt in range(_MAX_TXN_RETRIES):
             session = self.Session()
@@ -176,6 +199,9 @@ class DatabaseStorageBackend(StorageBackend):
 
                     existing = session.query(model).filter(col == key_value).first()
                     if existing:
+                        # 如果是 AccountModel 且已被软删除，跳过（防止写回已删除的账号）
+                        if model is AccountModel and getattr(existing, "deleted", False):
+                            continue
                         existing.data = data_json
                     else:
                         session.add(
@@ -204,6 +230,34 @@ class DatabaseStorageBackend(StorageBackend):
     ) -> None:
         """保留旧接口兼容，内部调用 _upsert_rows。"""
         self._upsert_rows(model, items, source_key, target_key)
+
+    def list_deleted_tokens(self) -> list[str]:
+        """返回所有已软删除的 access_token 列表（供多实例同步使用）。"""
+        session = self.Session()
+        try:
+            return [
+                row.access_token
+                for row in session.query(AccountModel).filter(
+                    AccountModel.deleted == True  # noqa: E712
+                )
+            ]
+        finally:
+            session.close()
+
+    def _migrate_soft_delete_columns(self) -> None:
+        """为已有的 accounts 表添加 deleted / deleted_at 列（兼容已有数据库）。"""
+        session = self.Session()
+        try:
+            for col_name, col_type in [("deleted", "BOOLEAN DEFAULT FALSE"), ("deleted_at", "VARCHAR(64)")]:
+                try:
+                    session.execute(text(
+                        f"ALTER TABLE accounts ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+                    ))
+                    session.commit()
+                except Exception:
+                    session.rollback()
+        finally:
+            session.close()
 
     def health_check(self) -> dict[str, Any]:
         """健康检查"""

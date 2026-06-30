@@ -72,19 +72,49 @@ class AccountService:
         t.start()
 
     def reload_from_db(self) -> None:
-        """从数据库重新加载账号数据到内存。"""
+        """从数据库重新加载账号数据到内存。
+        同时移除已被其他实例软删除的账号，防止删除后又被同步回来。
+        """
         try:
             remote = self._load_accounts()
+            # 获取已被其他实例软删除的 token 列表
+            deleted_tokens: set[str] = set()
+            if hasattr(self.storage, "list_deleted_tokens"):
+                try:
+                    deleted_tokens = set(self.storage.list_deleted_tokens())
+                except Exception:
+                    pass
+
             with self._lock:
+                # 移除已被软删除的账号
+                removed_count = 0
+                for token in deleted_tokens:
+                    if self._accounts.pop(token, None) is not None:
+                        removed_count += 1
+                    self._image_inflight.pop(token, None)
+                    # 清理 token 别名
+                    self._token_aliases = {
+                        old: new
+                        for old, new in self._token_aliases.items()
+                        if old not in deleted_tokens and new not in deleted_tokens
+                    }
+
+                # 添加新账号（排除已删除的）
                 merged = dict(self._accounts)
                 new_count = 0
                 for token, account in remote.items():
-                    if token not in merged:
+                    if token not in merged and token not in deleted_tokens:
                         merged[token] = account
                         new_count += 1
-                if new_count > 0:
+
+                if removed_count > 0 or new_count > 0:
                     self._accounts = merged
-                    print(f"[account_sync] 从数据库同步到 {new_count} 个新账号，当前共 {len(self._accounts)} 个")
+                    if removed_count > 0:
+                        if self._accounts:
+                            self._index %= len(self._accounts)
+                        else:
+                            self._index = 0
+                    print(f"[account_sync] 同步: 新增 {new_count} 个, 移除 {removed_count} 个已删除, 当前共 {len(self._accounts)} 个")
         except Exception as e:
             print(f"[account_sync] 同步失败: {e}")
 
@@ -1736,4 +1766,4 @@ class AccountService:
         }
 
 
-account_service = AccountService(config.get_storage_backend())
+account_service = AccountService(config.get_storage_backend())</think>
